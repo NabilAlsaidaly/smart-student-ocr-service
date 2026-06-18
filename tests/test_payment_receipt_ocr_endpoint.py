@@ -184,3 +184,31 @@ def test_payment_receipt_ocr_endpoint_rejects_blank_filename() -> None:
     assert response.json() == {
         "detail": "Uploaded file must have a filename.",
     }
+
+
+def test_payment_receipt_ocr_endpoint_rejects_unsupported_ocr_engine_driver() -> None:
+    original_driver = settings.ocr_engine_driver
+
+    settings.ocr_engine_driver = "unsupported"
+
+    try:
+        response = client.post(
+            "/api/ocr/payment-receipts/read",
+            files={
+                "file": (
+                    "receipt.png",
+                    make_valid_png_bytes(),
+                    "image/png",
+                ),
+            },
+            data={
+                "mime_type": "image/png",
+            },
+        )
+    finally:
+        settings.ocr_engine_driver = original_driver
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "detail": "Unsupported OCR engine driver [unsupported].",
+    }

@@ -5,9 +5,9 @@ from app.config import settings
 from app.exceptions import OcrServiceError
 from app.schemas import PaymentReceiptOcrResponse
 from app.services.image_preprocessor import ImagePreprocessor
-from app.services.ocr.payment_receipt_ocr_engine import (
-    FakePaymentReceiptOcrEngine,
-    PaymentReceiptOcrEngine,
+from app.services.ocr.payment_receipt_ocr_engine import PaymentReceiptOcrEngine
+from app.services.ocr.payment_receipt_ocr_engine_factory import (
+    PaymentReceiptOcrEngineFactory,
 )
 
 
@@ -19,9 +19,9 @@ class PaymentReceiptOcrService:
     - Validate uploaded file content.
     - Validate supported MIME types.
     - Prepare image files through conservative OpenCV preprocessing.
-    - Delegate text extraction to a swappable OCR engine.
+    - Delegate text extraction to a configurable OCR engine.
 
-    The current engine is fake and deterministic.
+    The current default engine is fake and deterministic.
     Later, EasyOCR/PaddleOCR will be added as alternative OCR engines.
     """
 
@@ -29,9 +29,11 @@ class PaymentReceiptOcrService:
         self,
         image_preprocessor: ImagePreprocessor | None = None,
         ocr_engine: PaymentReceiptOcrEngine | None = None,
+        ocr_engine_factory: PaymentReceiptOcrEngineFactory | None = None,
     ) -> None:
         self.image_preprocessor = image_preprocessor or ImagePreprocessor()
-        self.ocr_engine = ocr_engine or FakePaymentReceiptOcrEngine()
+        self.ocr_engine = ocr_engine
+        self.ocr_engine_factory = ocr_engine_factory or PaymentReceiptOcrEngineFactory()
 
     def read_payment_receipt(
         self,
@@ -60,7 +62,7 @@ class PaymentReceiptOcrService:
                     filename=filename,
                 )
 
-            ocr_result = self.ocr_engine.read(
+            ocr_result = self.resolved_ocr_engine().read(
                 prepared_file_path=prepared_file_path,
                 mime_type=normalized_mime_type,
             )
@@ -79,6 +81,9 @@ class PaymentReceiptOcrService:
         finally:
             if prepared_file_path is not None:
                 prepared_file_path.unlink(missing_ok=True)
+
+    def resolved_ocr_engine(self) -> PaymentReceiptOcrEngine:
+        return self.ocr_engine or self.ocr_engine_factory.make()
 
     def _validate_file_content(self, file_bytes: bytes) -> None:
         if len(file_bytes) == 0:

@@ -15,5 +15,10 @@ class Settings:
         if mime_type.strip()
     }
 
+    ocr_engine_driver: str = os.getenv(
+        "OCR_ENGINE_DRIVER",
+        "fake",
+    ).strip().lower()
+
 
 settings = Settings()
