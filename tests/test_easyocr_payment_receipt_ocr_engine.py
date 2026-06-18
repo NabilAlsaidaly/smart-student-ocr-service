@@ -40,6 +40,35 @@ class FakeEasyOcrReader:
             ),
         ]
 
+class FragmentedLineEasyOcrReader:
+    def readtext(
+        self,
+        image_path: str,
+        detail: int,
+        paragraph: bool,
+    ) -> list:
+        return [
+            (
+                [
+                    [0, 10],
+                    [100, 10],
+                    [100, 30],
+                    [0, 30],
+                ],
+                "Receipt No",
+                0.90,
+            ),
+            (
+                [
+                    [110, 12],
+                    [260, 12],
+                    [260, 32],
+                    [110, 32],
+                ],
+                "OCR-TEST-001",
+                0.85,
+            ),
+        ]
 
 class EmptyEasyOcrReader:
     def readtext(
@@ -162,3 +191,24 @@ def test_easyocr_payment_receipt_ocr_engine_wraps_reader_failures() -> None:
 
     assert exception_info.value.message == "EasyOCR failed to read the prepared receipt image."
     assert exception_info.value.status_code == 500
+
+def test_easyocr_payment_receipt_ocr_engine_groups_fragments_on_same_line() -> None:
+    with NamedTemporaryFile(delete=False, suffix=".png") as temporary_file:
+        temporary_file.write(b"prepared image content")
+        temporary_file_path = Path(temporary_file.name)
+
+    try:
+        result = EasyOcrPaymentReceiptOcrEngine(
+            languages=["en", "ar"],
+            gpu=False,
+            reader=FragmentedLineEasyOcrReader(),
+        ).read(
+            prepared_file_path=temporary_file_path,
+            mime_type="image/png",
+        )
+
+        assert result.text == "Receipt No OCR-TEST-001"
+        assert result.confidence_score == 87.5
+        assert result.engine == "easyocr"
+    finally:
+        temporary_file_path.unlink(missing_ok=True)

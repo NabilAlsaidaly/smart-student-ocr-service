@@ -9,6 +9,9 @@ from app.services.ocr.payment_receipt_ocr_engine import PaymentReceiptOcrEngine
 from app.services.ocr.payment_receipt_ocr_engine_factory import (
     PaymentReceiptOcrEngineFactory,
 )
+from app.services.ocr.payment_receipt_ocr_text_normalizer import (
+    PaymentReceiptOcrTextNormalizer,
+)
 
 
 class PaymentReceiptOcrService:
@@ -20,9 +23,9 @@ class PaymentReceiptOcrService:
     - Validate supported MIME types.
     - Prepare image files through conservative OpenCV preprocessing.
     - Delegate text extraction to a configurable OCR engine.
+    - Normalize OCR text into parser-friendly text for Laravel.
 
-    The current default engine is fake and deterministic.
-    Later, EasyOCR/PaddleOCR will be added as alternative OCR engines.
+    The raw OCR engine output remains available inside raw.engine.
     """
 
     def __init__(
@@ -30,10 +33,12 @@ class PaymentReceiptOcrService:
         image_preprocessor: ImagePreprocessor | None = None,
         ocr_engine: PaymentReceiptOcrEngine | None = None,
         ocr_engine_factory: PaymentReceiptOcrEngineFactory | None = None,
+        text_normalizer: PaymentReceiptOcrTextNormalizer | None = None,
     ) -> None:
         self.image_preprocessor = image_preprocessor or ImagePreprocessor()
         self.ocr_engine = ocr_engine
         self.ocr_engine_factory = ocr_engine_factory or PaymentReceiptOcrEngineFactory()
+        self.text_normalizer = text_normalizer or PaymentReceiptOcrTextNormalizer()
 
     def read_payment_receipt(
         self,
@@ -66,15 +71,20 @@ class PaymentReceiptOcrService:
                 prepared_file_path=prepared_file_path,
                 mime_type=normalized_mime_type,
             )
+            normalized_text = self.text_normalizer.normalize(ocr_result.text)
 
             return PaymentReceiptOcrResponse(
-                text=ocr_result.text,
+                text=normalized_text,
                 confidence_score=ocr_result.confidence_score,
                 engine=ocr_result.engine,
                 raw={
                     "filename": filename,
                     "mime_type": normalized_mime_type,
                     "preprocessing": preprocessing_steps,
+                    "original_text": ocr_result.text,
+                    "post_processing": {
+                        "text_normalized": normalized_text != ocr_result.text,
+                    },
                     "engine": ocr_result.raw,
                 },
             )

@@ -58,14 +58,9 @@ class EasyOcrPaymentReceiptOcrEngine:
             ) from exception
 
         normalized_results = self._normalize_results(results)
-        text_lines = [
-            item["text"]
-            for item in normalized_results
-            if item["text"].strip() != ""
-        ]
 
         return PaymentReceiptOcrEngineResult(
-            text="\n".join(text_lines),
+            text="\n".join(self._group_text_lines(normalized_results)),
             confidence_score=self._average_confidence(normalized_results),
             engine="easyocr",
             raw={
@@ -136,6 +131,61 @@ class EasyOcrPaymentReceiptOcrEngine:
                 item["left"],
             ),
         )
+
+    def _group_text_lines(
+        self,
+        normalized_results: list[dict[str, Any]],
+    ) -> list[str]:
+        line_threshold = 20.0
+        grouped_lines: list[list[dict[str, Any]]] = []
+
+        for item in normalized_results:
+            if str(item["text"]).strip() == "":
+                continue
+
+            matching_line = self._find_matching_line(
+                grouped_lines=grouped_lines,
+                item=item,
+                line_threshold=line_threshold,
+            )
+
+            if matching_line is None:
+                grouped_lines.append([item])
+            else:
+                matching_line.append(item)
+
+        lines: list[str] = []
+
+        for line_items in grouped_lines:
+            sorted_line_items = sorted(
+                line_items,
+                key=lambda item: item["left"],
+            )
+
+            lines.append(
+                " ".join(
+                    str(item["text"]).strip()
+                    for item in sorted_line_items
+                    if str(item["text"]).strip() != ""
+                )
+            )
+
+        return lines
+
+    def _find_matching_line(
+        self,
+        grouped_lines: list[list[dict[str, Any]]],
+        item: dict[str, Any],
+        line_threshold: float,
+    ) -> list[dict[str, Any]] | None:
+        for line_items in grouped_lines:
+            reference_top = float(line_items[0]["top"])
+            item_top = float(item["top"])
+
+            if abs(reference_top - item_top) <= line_threshold:
+                return line_items
+
+        return None
 
     def _normalize_confidence(self, confidence: Any) -> float | None:
         try:
