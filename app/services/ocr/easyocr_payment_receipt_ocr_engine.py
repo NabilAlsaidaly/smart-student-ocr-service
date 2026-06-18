@@ -1,5 +1,8 @@
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any
+
+import cv2
 
 from app.config import settings
 from app.exceptions import OcrServiceError
@@ -18,6 +21,9 @@ class EasyOcrPaymentReceiptOcrEngine:
     EasyOCR may return numpy scalar values inside bounding boxes. Before
     returning the OCR result, all values must be normalized into JSON-safe
     Python native types.
+
+    The engine is rotation-aware because users may upload receipt photos taken
+    sideways from mobile devices.
     """
 
     _reader_cache: dict[tuple[tuple[str, ...], bool], Any] = {}
@@ -44,10 +50,9 @@ class EasyOcrPaymentReceiptOcrEngine:
             )
 
         try:
-            results = self._reader().readtext(
-                str(prepared_file_path),
-                detail=1,
-                paragraph=False,
+            candidates = self._read_rotation_candidates(
+                prepared_file_path=prepared_file_path,
+                mime_type=mime_type,
             )
         except OcrServiceError:
             raise
@@ -57,19 +62,24 @@ class EasyOcrPaymentReceiptOcrEngine:
                 status_code=500,
             ) from exception
 
-        normalized_results = self._normalize_results(results)
+        best_candidate = self._select_best_candidate(candidates)
 
         return PaymentReceiptOcrEngineResult(
-            text="\n".join(self._group_text_lines(normalized_results)),
-            confidence_score=self._average_confidence(normalized_results),
+            text=best_candidate["text"],
+            confidence_score=best_candidate["confidence_score"],
             engine="easyocr",
             raw={
                 "driver": "easyocr",
                 "languages": list(self.languages),
                 "gpu": bool(self.gpu),
                 "mime_type": str(mime_type),
-                "result_count": int(len(normalized_results)),
-                "items": normalized_results,
+                "result_count": int(len(best_candidate["items"])),
+                "orientation": {
+                    "rotation_degrees": int(best_candidate["rotation_degrees"]),
+                    "candidate_count": int(len(candidates)),
+                    "score": float(best_candidate["score"]),
+                },
+                "items": best_candidate["items"],
             },
         )
 
@@ -97,6 +107,179 @@ class EasyOcrPaymentReceiptOcrEngine:
             )
 
         return self._reader_cache[cache_key]
+
+    def _read_rotation_candidates(
+        self,
+        prepared_file_path: Path,
+        mime_type: str,
+    ) -> list[dict[str, Any]]:
+        candidates = [
+            self._read_candidate(
+                file_path=prepared_file_path,
+                rotation_degrees=0,
+            )
+        ]
+
+        if not mime_type.startswith("image/"):
+            return candidates
+
+        rotated_file_paths = self._create_rotated_image_files(prepared_file_path)
+
+        try:
+            for rotation_degrees, rotated_file_path in rotated_file_paths:
+                candidates.append(
+                    self._read_candidate(
+                        file_path=rotated_file_path,
+                        rotation_degrees=rotation_degrees,
+                    )
+                )
+        finally:
+            for _, rotated_file_path in rotated_file_paths:
+                rotated_file_path.unlink(missing_ok=True)
+
+        return candidates
+
+    def _read_candidate(
+        self,
+        file_path: Path,
+        rotation_degrees: int,
+    ) -> dict[str, Any]:
+        results = self._reader().readtext(
+            str(file_path),
+            detail=1,
+            paragraph=False,
+        )
+
+        normalized_results = self._normalize_results(results)
+        text = "\n".join(self._group_text_lines(normalized_results))
+        confidence_score = self._average_confidence(normalized_results)
+
+        return {
+            "rotation_degrees": rotation_degrees,
+            "text": text,
+            "confidence_score": confidence_score,
+            "items": normalized_results,
+            "score": self._score_candidate(
+                text=text,
+                confidence_score=confidence_score,
+                result_count=len(normalized_results),
+            ),
+        }
+
+    def _create_rotated_image_files(
+        self,
+        prepared_file_path: Path,
+    ) -> list[tuple[int, Path]]:
+        image = cv2.imread(str(prepared_file_path), cv2.IMREAD_COLOR)
+
+        if image is None:
+            return []
+
+        rotation_map = {
+            90: cv2.ROTATE_90_CLOCKWISE,
+            180: cv2.ROTATE_180,
+            270: cv2.ROTATE_90_COUNTERCLOCKWISE,
+        }
+
+        rotated_file_paths: list[tuple[int, Path]] = []
+
+        for rotation_degrees, rotation_code in rotation_map.items():
+            rotated_image = cv2.rotate(image, rotation_code)
+            rotated_file_path = self._write_rotation_candidate(
+                image=rotated_image,
+                rotation_degrees=rotation_degrees,
+            )
+
+            rotated_file_paths.append(
+                (
+                    rotation_degrees,
+                    rotated_file_path,
+                )
+            )
+
+        return rotated_file_paths
+
+    def _write_rotation_candidate(
+        self,
+        image: Any,
+        rotation_degrees: int,
+    ) -> Path:
+        with NamedTemporaryFile(
+            delete=False,
+            suffix=f".rot{rotation_degrees}.png",
+        ) as temporary_file:
+            output_file_path = Path(temporary_file.name)
+
+        is_written = cv2.imwrite(
+            str(output_file_path),
+            image,
+        )
+
+        if not is_written:
+            output_file_path.unlink(missing_ok=True)
+
+            raise OcrServiceError(
+                message="Failed to write rotated OCR image candidate.",
+                status_code=500,
+            )
+
+        return output_file_path
+
+    def _select_best_candidate(
+        self,
+        candidates: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return max(
+            candidates,
+            key=lambda candidate: candidate["score"],
+        )
+
+    def _score_candidate(
+        self,
+        text: str,
+        confidence_score: float | None,
+        result_count: int,
+    ) -> float:
+        normalized_text = text.lower()
+
+        indicators = [
+            "bank",
+            "payment",
+            "receipt",
+            "amount",
+            "transaction",
+            "syp",
+            "فاتورة",
+            "حساب",
+            "المبلغ",
+            "ليرة",
+            "سورية",
+            "سوريا",
+            "المصرف",
+            "البنك",
+            "رقم",
+            "قسيمة",
+            "ايصال",
+            "إيصال",
+            "سند",
+            "دفع",
+            "تحويل",
+        ]
+
+        indicator_hits = sum(
+            1
+            for indicator in indicators
+            if indicator.lower() in normalized_text
+        )
+
+        has_digits = any(character.isdigit() for character in text)
+
+        return (
+            float(confidence_score or 0.0)
+            + float(result_count * 2)
+            + float(indicator_hits * 25)
+            + (20.0 if has_digits else 0.0)
+        )
 
     def _normalize_results(
         self,
