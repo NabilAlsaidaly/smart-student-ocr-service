@@ -1,6 +1,23 @@
 import os
 
 
+def env_bool(
+    key: str,
+    default: bool = False,
+) -> bool:
+    value = os.getenv(key)
+
+    if value is None:
+        return default
+
+    return value.strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 class Settings:
     max_file_size_bytes: int = int(
         os.getenv("OCR_MAX_FILE_SIZE_BYTES", str(10 * 1024 * 1024))
@@ -19,6 +36,20 @@ class Settings:
         "OCR_ENGINE_DRIVER",
         "fake",
     ).strip().lower()
+
+    easyocr_languages: list[str] = [
+        language.strip()
+        for language in os.getenv(
+            "OCR_EASYOCR_LANGUAGES",
+            "en,ar",
+        ).split(",")
+        if language.strip()
+    ]
+
+    easyocr_gpu: bool = env_bool(
+        key="OCR_EASYOCR_GPU",
+        default=False,
+    )
 
 
 settings = Settings()

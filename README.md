@@ -17,10 +17,14 @@ Laravel communicates with this service through a server-to-server HTTP request.
 
 ## Environment variables
 
-```env
+````env
 OCR_MAX_FILE_SIZE_BYTES=10485760
 OCR_ALLOWED_MIME_TYPES=image/jpeg,image/png,image/webp,application/pdf
-```
+
+OCR_ENGINE_DRIVER=fake
+
+OCR_EASYOCR_LANGUAGES=en,ar
+OCR_EASYOCR_GPU=false
 
 ## Run locally
 
@@ -30,7 +34,7 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
-```
+````
 
 ## Health check
 
