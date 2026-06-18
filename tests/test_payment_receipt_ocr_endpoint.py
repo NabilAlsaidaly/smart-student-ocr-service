@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import pytest
 from fastapi.testclient import TestClient
 
 from app.config import settings
@@ -7,6 +8,18 @@ from app.main import app
 
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def reset_ocr_engine_driver() -> None:
+    original_driver = settings.ocr_engine_driver
+
+    settings.ocr_engine_driver = "fake"
+
+    try:
+        yield
+    finally:
+        settings.ocr_engine_driver = original_driver
 
 
 def make_valid_png_bytes() -> bytes:
@@ -73,6 +86,7 @@ def test_payment_receipt_ocr_endpoint_returns_fake_ocr_result_for_valid_image() 
     assert payload["raw"]["engine"]["driver"] == "fake"
     assert payload["raw"]["engine"]["mime_type"] == "image/png"
     assert payload["raw"]["engine"]["prepared_file_suffix"] == ".png"
+
 
 def test_payment_receipt_ocr_endpoint_rejects_invalid_image_content() -> None:
     response = client.post(

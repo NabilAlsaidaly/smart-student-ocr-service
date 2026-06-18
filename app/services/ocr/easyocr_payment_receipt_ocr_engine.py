@@ -14,6 +14,10 @@ class EasyOcrPaymentReceiptOcrEngine:
 
     This engine is loaded lazily so the service can still run and test with the
     fake engine when EasyOCR is not installed.
+
+    EasyOCR may return numpy scalar values inside bounding boxes. Before
+    returning the OCR result, all values must be normalized into JSON-safe
+    Python native types.
     """
 
     _reader_cache: dict[tuple[tuple[str, ...], bool], Any] = {}
@@ -66,10 +70,10 @@ class EasyOcrPaymentReceiptOcrEngine:
             engine="easyocr",
             raw={
                 "driver": "easyocr",
-                "languages": self.languages,
-                "gpu": self.gpu,
-                "mime_type": mime_type,
-                "result_count": len(normalized_results),
+                "languages": list(self.languages),
+                "gpu": bool(self.gpu),
+                "mime_type": str(mime_type),
+                "result_count": int(len(normalized_results)),
                 "items": normalized_results,
             },
         )
@@ -80,7 +84,7 @@ class EasyOcrPaymentReceiptOcrEngine:
 
         cache_key = (
             tuple(self.languages),
-            self.gpu,
+            bool(self.gpu),
         )
 
         if cache_key not in self._reader_cache:
@@ -109,9 +113,10 @@ class EasyOcrPaymentReceiptOcrEngine:
             if not isinstance(result, (list, tuple)) or len(result) < 3:
                 continue
 
-            bbox = result[0]
+            raw_bbox = result[0]
             text = str(result[1] or "")
             confidence = self._normalize_confidence(result[2])
+            bbox = self._normalize_bbox(raw_bbox)
             left, top = self._bbox_top_left(bbox)
 
             normalized_results.append(
@@ -148,6 +153,25 @@ class EasyOcrPaymentReceiptOcrEngine:
 
         return round(normalized_confidence, 2)
 
+    def _normalize_bbox(self, bbox: Any) -> list[list[float]]:
+        normalized_points: list[list[float]] = []
+
+        try:
+            for point in bbox:
+                if not isinstance(point, (list, tuple)) or len(point) < 2:
+                    continue
+
+                normalized_points.append(
+                    [
+                        float(point[0]),
+                        float(point[1]),
+                    ]
+                )
+        except TypeError:
+            return []
+
+        return normalized_points
+
     def _average_confidence(
         self,
         normalized_results: list[dict[str, Any]],
@@ -168,12 +192,14 @@ class EasyOcrPaymentReceiptOcrEngine:
 
     def _bbox_top_left(
         self,
-        bbox: Any,
+        bbox: list[list[float]],
     ) -> tuple[float, float]:
+        if not bbox:
+            return 0.0, 0.0
+
         try:
-            points = list(bbox)
-            x_values = [float(point[0]) for point in points]
-            y_values = [float(point[1]) for point in points]
+            x_values = [float(point[0]) for point in bbox]
+            y_values = [float(point[1]) for point in bbox]
 
             return min(x_values), min(y_values)
         except (TypeError, ValueError, IndexError):

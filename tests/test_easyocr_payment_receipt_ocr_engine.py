@@ -1,6 +1,7 @@
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
+import numpy as np
 import pytest
 
 from app.exceptions import OcrServiceError
@@ -15,27 +16,27 @@ class FakeEasyOcrReader:
         image_path: str,
         detail: int,
         paragraph: bool,
-    ) -> list[tuple[list[list[float]], str, float]]:
+    ) -> list[tuple[list[list[np.int32]], str, float]]:
         return [
             (
                 [
-                    [0, 40],
-                    [100, 40],
-                    [100, 60],
-                    [0, 60],
+                    [np.int32(0), np.int32(40)],
+                    [np.int32(100), np.int32(40)],
+                    [np.int32(100), np.int32(60)],
+                    [np.int32(0), np.int32(60)],
                 ],
                 "Amount 5000000 SYP",
-                0.80,
+                np.float32(0.80),
             ),
             (
                 [
-                    [0, 10],
-                    [100, 10],
-                    [100, 30],
-                    [0, 30],
+                    [np.int32(0), np.int32(10)],
+                    [np.int32(100), np.int32(10)],
+                    [np.int32(100), np.int32(30)],
+                    [np.int32(0), np.int32(30)],
                 ],
                 "Bank: Test Bank",
-                0.90,
+                np.float32(0.90),
             ),
         ]
 
@@ -88,6 +89,17 @@ def test_easyocr_payment_receipt_ocr_engine_returns_ordered_text_and_average_con
         assert result.raw["gpu"] is False
         assert result.raw["mime_type"] == "image/png"
         assert result.raw["result_count"] == 2
+
+        first_item = result.raw["items"][0]
+
+        assert first_item["bbox"] == [
+            [0.0, 10.0],
+            [100.0, 10.0],
+            [100.0, 30.0],
+            [0.0, 30.0],
+        ]
+        assert isinstance(first_item["left"], float)
+        assert isinstance(first_item["top"], float)
     finally:
         temporary_file_path.unlink(missing_ok=True)
 
