@@ -5,24 +5,33 @@ from app.config import settings
 from app.exceptions import OcrServiceError
 from app.schemas import PaymentReceiptOcrResponse
 from app.services.image_preprocessor import ImagePreprocessor
+from app.services.ocr.payment_receipt_ocr_engine import (
+    FakePaymentReceiptOcrEngine,
+    PaymentReceiptOcrEngine,
+)
 
 
 class PaymentReceiptOcrService:
     """
-    Temporary OCR service implementation.
+    Payment receipt OCR application service.
 
-    This service now performs conservative OpenCV preprocessing for image files,
-    then returns deterministic fake OCR text.
+    Responsibilities:
+    - Validate uploaded file content.
+    - Validate supported MIME types.
+    - Prepare image files through conservative OpenCV preprocessing.
+    - Delegate text extraction to a swappable OCR engine.
 
-    In the next OCR phase, EasyOCR/PaddleOCR will consume the prepared file
-    without changing the HTTP contract with Laravel.
+    The current engine is fake and deterministic.
+    Later, EasyOCR/PaddleOCR will be added as alternative OCR engines.
     """
 
     def __init__(
         self,
         image_preprocessor: ImagePreprocessor | None = None,
+        ocr_engine: PaymentReceiptOcrEngine | None = None,
     ) -> None:
         self.image_preprocessor = image_preprocessor or ImagePreprocessor()
+        self.ocr_engine = ocr_engine or FakePaymentReceiptOcrEngine()
 
     def read_payment_receipt(
         self,
@@ -51,24 +60,20 @@ class PaymentReceiptOcrService:
                     filename=filename,
                 )
 
+            ocr_result = self.ocr_engine.read(
+                prepared_file_path=prepared_file_path,
+                mime_type=normalized_mime_type,
+            )
+
             return PaymentReceiptOcrResponse(
-                text="\n".join(
-                    [
-                        "BANK PAYMENT RECEIPT",
-                        "Bank: Python OCR Bank",
-                        "Receipt No: OCR-HTTP-001",
-                        "Transaction No: TX-HTTP-001",
-                        "Amount: 5000000",
-                        "Currency: SYP",
-                    ]
-                ),
-                confidence_score=91.75,
-                engine="python-fake-ocr",
+                text=ocr_result.text,
+                confidence_score=ocr_result.confidence_score,
+                engine=ocr_result.engine,
                 raw={
                     "filename": filename,
                     "mime_type": normalized_mime_type,
-                    "prepared_file": str(prepared_file_path),
                     "preprocessing": preprocessing_steps,
+                    "engine": ocr_result.raw,
                 },
             )
         finally:

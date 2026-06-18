@@ -70,7 +70,9 @@ def test_payment_receipt_ocr_endpoint_returns_fake_ocr_result_for_valid_image() 
         "denoise",
         "contrast_equalization",
     ]
-
+    assert payload["raw"]["engine"]["driver"] == "fake"
+    assert payload["raw"]["engine"]["mime_type"] == "image/png"
+    assert payload["raw"]["engine"]["prepared_file_suffix"] == ".png"
 
 def test_payment_receipt_ocr_endpoint_rejects_invalid_image_content() -> None:
     response = client.post(
