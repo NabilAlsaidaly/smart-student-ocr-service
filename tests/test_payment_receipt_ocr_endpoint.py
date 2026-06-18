@@ -1,3 +1,5 @@
+import cv2
+import numpy as np
 from fastapi.testclient import TestClient
 
 from app.config import settings
@@ -7,13 +9,35 @@ from app.main import app
 client = TestClient(app)
 
 
+def make_valid_png_bytes() -> bytes:
+    image = np.full(
+        shape=(64, 64, 3),
+        fill_value=255,
+        dtype=np.uint8,
+    )
+
+    cv2.rectangle(
+        img=image,
+        pt1=(8, 8),
+        pt2=(56, 56),
+        color=(0, 0, 0),
+        thickness=2,
+    )
+
+    is_encoded, encoded_image = cv2.imencode(".png", image)
+
+    assert is_encoded is True
+
+    return encoded_image.tobytes()
+
+
 def test_payment_receipt_ocr_endpoint_returns_fake_ocr_result_for_valid_image() -> None:
     response = client.post(
         "/api/ocr/payment-receipts/read",
         files={
             "file": (
                 "receipt.png",
-                b"fake image content",
+                make_valid_png_bytes(),
                 "image/png",
             ),
         },
@@ -40,7 +64,33 @@ def test_payment_receipt_ocr_endpoint_returns_fake_ocr_result_for_valid_image() 
     assert payload["engine"] == "python-fake-ocr"
     assert payload["raw"]["filename"] == "receipt.png"
     assert payload["raw"]["mime_type"] == "image/png"
-    assert payload["raw"]["preprocessing"] == []
+    assert payload["raw"]["preprocessing"] == [
+        "decode",
+        "grayscale",
+        "denoise",
+        "contrast_equalization",
+    ]
+
+
+def test_payment_receipt_ocr_endpoint_rejects_invalid_image_content() -> None:
+    response = client.post(
+        "/api/ocr/payment-receipts/read",
+        files={
+            "file": (
+                "receipt.png",
+                b"this is not a real image",
+                "image/png",
+            ),
+        },
+        data={
+            "mime_type": "image/png",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": "Uploaded image could not be decoded.",
+    }
 
 
 def test_payment_receipt_ocr_endpoint_rejects_unsupported_mime_type() -> None:
@@ -119,7 +169,7 @@ def test_payment_receipt_ocr_endpoint_rejects_blank_filename() -> None:
         files={
             "file": (
                 " ",
-                b"fake image content",
+                make_valid_png_bytes(),
                 "image/png",
             ),
         },
